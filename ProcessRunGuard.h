@@ -19,43 +19,22 @@ class ProcessRunGuard {
 public:
 	ProcessRunGuard(std::atomic<HANDLE>& currentProcess, std::mutex& processMutex, std::atomic<bool>& cancelRequested) : g_currentProcess(currentProcess), g_processMutex(processMutex), g_cancelRequested(cancelRequested) {}
 	~ProcessRunGuard() {
-		auto safe_close = [](HANDLE& h) noexcept {
-			auto prev = InterlockedExchangePointer(reinterpret_cast<PVOID*>(&h), nullptr);
-			auto orig = reinterpret_cast<HANDLE>(prev);
-
-			if (!orig || orig == INVALID_HANDLE_VALUE) {
-				return;
-			}
-
-			HANDLE dup = nullptr;
-			auto dupOk = DuplicateHandle(
-				GetCurrentProcess(), 
-				orig,
-				GetCurrentProcess(),
-				&dup,
-				0,
-				FALSE,
-				DUPLICATE_SAME_ACCESS
-			);
-
-			if (dupOk) {
-				CloseHandle(dup);
-				CloseHandle(orig);
-			}
-			else {
-				DWORD err = GetLastError();
-				if (err == ERROR_INVALID_HANDLE) {
-				}
-				else {
-					CloseHandle(orig);
-				}
-			}
-			};
-
-		safe_close(_current.pi.hProcess);
-		safe_close(_current.pi.hThread);
-		safe_close(_current.out_read);
-		safe_close(_current.err_read);
+		if (_current.pi.hProcess && !closeHProcess) {
+			CloseHandle(_current.pi.hProcess);
+			closeHProcess = true;
+		}
+		if (_current.pi.hThread && !closeHThread) {
+			CloseHandle(_current.pi.hThread);
+			closeHThread = true;
+		}
+		if (_current.out_read && !closeOutRead) {
+			CloseHandle(_current.out_read);
+			closeOutRead = true;
+		}
+		if (_current.err_read && !closeErrRead) {
+			CloseHandle(_current.err_read);
+			closeErrRead = true;
+		}
 	}
 	ProcessRunGuardResult& StartProcessWithRedirect(const std::wstring& commandLine, const std::wstring& workDir) {
 		SECURITY_ATTRIBUTES sa{ sizeof(sa), nullptr, TRUE };
@@ -120,6 +99,10 @@ public:
 	};
 
 private:
+	bool closeHProcess;
+	bool closeHThread;
+	bool closeOutRead;
+	bool closeErrRead;
 	std::atomic<HANDLE>& g_currentProcess;
 	std::mutex& g_processMutex;
 	std::atomic<bool>& g_cancelRequested;
