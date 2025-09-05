@@ -66,6 +66,9 @@ public:
 			return _current;
 		}
 
+		CloseHandle(outWrite);
+		CloseHandle(errWrite);
+
 
 		std::lock_guard<std::mutex> lk(g_processMutex);
 		g_currentProcess = pi.hProcess;
