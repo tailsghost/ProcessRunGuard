@@ -2,48 +2,40 @@
 
 #include <windows.h>
 #include <string>
-#include <mutex>
-#include <atomic>
+#include <vector>
 
 struct ProcessRunGuardResult {
-	PROCESS_INFORMATION pi{};
-	HANDLE out_read{ nullptr };
-	HANDLE err_read{ nullptr };
-	bool seccess{ false };
-	DWORD last_error{ 0 };
-	std::wstring message;
-	int32_t code;
+	std::wstring stdoutText;
+	std::wstring stderrText;
+	std::wstring command;
+	int code = -1;
+	bool seccess = false;
 };
+
 
 class ProcessRunGuard {
 public:
-	ProcessRunGuard(std::atomic<HANDLE>& currentProcess, std::mutex& processMutex, std::atomic<bool>& cancelRequested) : g_currentProcess(currentProcess), g_processMutex(processMutex), g_cancelRequested(cancelRequested) {}
-	~ProcessRunGuard() {
-		CloseHandlers();
-	}
-	ProcessRunGuardResult& StartProcessWithRedirect(const std::wstring& commandLine, const std::wstring& workDir) {
-		SECURITY_ATTRIBUTES sa{ sizeof(sa), nullptr, TRUE };
+	ProcessRunGuard() = default;
+	~ProcessRunGuard() = default;
+
+	ProcessRunGuardResult RunCommand(const std::wstring command) {
+		ProcessRunGuardResult res;
+		res.command = command;
+
+		SECURITY_ATTRIBUTES sa{};
+		sa.nLength = sizeof(sa);
+		sa.bInheritHandle = TRUE;
+
 		HANDLE outRead = nullptr, outWrite = nullptr;
 		HANDLE errRead = nullptr, errWrite = nullptr;
 
-		if (!CreatePipe(&outRead, &outWrite, &sa, 0)) {
-			CloseHandlers();
-			_current.last_error = GetLastError();
-			_current.message = L"Failed to create stdout pipe";
-			_current.seccess = false;
-			return _current;
-		}
+		if (!CreatePipe(&outRead, &outWrite, &sa, 0))
+			return Fail(res, L"CreatePipe stdout");
+
+		if (!CreatePipe(&errRead, &errWrite, &sa, 0))
+			return Fail(res, L"CreatePipe stderr");
 
 		SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
-
-		if (!CreatePipe(&errRead, &errWrite, &sa, 0)) {
-			CloseHandlers();
-			_current.last_error = GetLastError();
-			_current.message = L"Failed to create stderr pipe";
-			_current.seccess = false;
-			return _current;
-		}
-
 		SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0);
 
 		STARTUPINFOW si{};
@@ -53,60 +45,69 @@ public:
 		si.hStdError = errWrite;
 
 		PROCESS_INFORMATION pi{};
-		auto cmdCopy = commandLine;
-		auto cmdBuf = &cmdCopy[0];
 
-		auto ok = CreateProcessW(nullptr, cmdBuf, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, workDir.empty() ? nullptr : (LPWSTR)workDir.c_str(), &si, &pi);
+		std::wstring fullCmd = L"cmd.exe /C " + command;
+		std::vector<wchar_t> buf(fullCmd.begin(), fullCmd.end());
+		buf.push_back(0);
 
-		if (!ok) {
-			CloseHandlers();
-			_current.last_error = GetLastError();
-			_current.message = L"CreateProcess failed";
-			_current.seccess = false;
-			return _current;
-		}
+		BOOL ok = CreateProcessW(
+			nullptr,
+			buf.data(),
+			nullptr,
+			nullptr,
+			TRUE,
+			CREATE_NO_WINDOW,
+			nullptr,
+			nullptr,
+			&si,
+			&pi
+		);
 
 		CloseHandle(outWrite);
 		CloseHandle(errWrite);
 
+		if (!ok)
+			return Fail(res, L"CreateProcessW failed");
 
-		std::lock_guard<std::mutex> lk(g_processMutex);
-		g_currentProcess = pi.hProcess;
-		g_cancelRequested = false;
+		std::string outA = ReadPipe(outRead);
+		std::string errA = ReadPipe(errRead);
 
-		_current.pi = pi;
-		_current.out_read = outRead;
-		_current.err_read = errRead;
-		_current.seccess = true;
-		return _current;
-	};
+		WaitForSingleObject(pi.hProcess, INFINITE);
+		GetExitCodeProcess(pi.hProcess, (DWORD*)&res.code);
+
+		CloseHandle(outRead);
+		CloseHandle(errRead);
+		CloseHandle(pi.hProcess);
+		CloseHandle(pi.hThread);
+
+		res.stdoutText = Utf8ToWide(outA);
+		res.stderrText = Utf8ToWide(errA);
+		res.seccess = (res.code == 0);
+
+		return res;
+	}
 
 private:
-	bool closeHProcess;
-	bool closeHThread;
-	bool closeOutRead;
-	bool closeErrRead;
-	std::atomic<HANDLE>& g_currentProcess;
-	std::mutex& g_processMutex;
-	std::atomic<bool>& g_cancelRequested;
-	ProcessRunGuardResult _current;
+	static ProcessRunGuardResult Fail(ProcessRunGuardResult& r, const std::wstring& msg) {
+		r.stderrText = msg;
+		r.seccess = false;
+		return r;
+	}
 
-	void CloseHandlers() {
-		if (_current.pi.hProcess && !closeHProcess) {
-			CloseHandle(_current.pi.hProcess);
-			closeHProcess = true;
-		}
-		if (_current.pi.hThread && !closeHThread) {
-			CloseHandle(_current.pi.hThread);
-			closeHThread = true;
-		}
-		if (_current.out_read && !closeOutRead) {
-			CloseHandle(_current.out_read);
-			closeOutRead = true;
-		}
-		if (_current.err_read && !closeErrRead) {
-			CloseHandle(_current.err_read);
-			closeErrRead = true;
-		}
+	static std::string ReadPipe(HANDLE h) {
+		std::string s;
+		char buf[4096];
+		DWORD read = 0;
+		while(ReadFile(h, buf, sizeof(buf), &read, nullptr) && read > 0)
+			s.append(buf, read);
+		return s;
+	}
+
+	static std::wstring Utf8ToWide(const std::string& s) {
+		if (s.empty()) return {};
+		int size = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
+		std::wstring out(size, 0);
+		MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), out.data(), size);
+		return out;
 	}
 };
