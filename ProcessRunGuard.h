@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <string>
 #include <vector>
+#include <thread>
 
 struct ProcessRunGuardResult {
 	std::wstring stdoutText;
@@ -18,9 +19,8 @@ public:
 	ProcessRunGuard() = default;
 	~ProcessRunGuard() = default;
 
-	ProcessRunGuardResult RunCommand(const std::wstring command) {
-		ProcessRunGuardResult res;
-		res.command = command;
+	void RunCommand(const std::wstring& command, ProcessRunGuardResult& outResult) {
+		outResult.command = command;
 
 		SECURITY_ATTRIBUTES sa{};
 		sa.nLength = sizeof(sa);
@@ -30,10 +30,10 @@ public:
 		HANDLE errRead = nullptr, errWrite = nullptr;
 
 		if (!CreatePipe(&outRead, &outWrite, &sa, 0))
-			return Fail(res, L"CreatePipe stdout");
+			Fail(outResult, L"CreatePipe stdout");
 
 		if (!CreatePipe(&errRead, &errWrite, &sa, 0))
-			return Fail(res, L"CreatePipe stderr");
+			Fail(outResult, L"CreatePipe stderr");
 
 		SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
 		SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0);
@@ -67,31 +67,32 @@ public:
 		CloseHandle(errWrite);
 
 		if (!ok)
-			return Fail(res, L"CreateProcessW failed");
+			Fail(outResult, L"CreateProcessW failed");
 
-		std::string outA = ReadPipe(outRead);
-		std::string errA = ReadPipe(errRead);
+		std::string outA, errA;
+
+		std::thread t1([&] { outA = ReadPipe(outRead); });
+		std::thread t2([&] { errA = ReadPipe(errRead); });
 
 		WaitForSingleObject(pi.hProcess, INFINITE);
-		GetExitCodeProcess(pi.hProcess, (DWORD*)&res.code);
+		GetExitCodeProcess(pi.hProcess, (DWORD*)&outResult.code);
 
 		CloseHandle(outRead);
 		CloseHandle(errRead);
+		t1.join();
+		t2.join();
 		CloseHandle(pi.hProcess);
 		CloseHandle(pi.hThread);
 
-		res.stdoutText = Utf8ToWide(outA);
-		res.stderrText = Utf8ToWide(errA);
-		res.seccess = (res.code == 0);
-
-		return res;
+		outResult.stdoutText = Utf8ToWide(outA);
+		outResult.stderrText = Utf8ToWide(errA);
+		outResult.seccess = (outResult.code == 0);
 	}
 
 private:
-	static ProcessRunGuardResult Fail(ProcessRunGuardResult& r, const std::wstring& msg) {
+	static void Fail(ProcessRunGuardResult& r, const std::wstring& msg) {
 		r.stderrText = msg;
 		r.seccess = false;
-		return r;
 	}
 
 	static std::string ReadPipe(HANDLE h) {
