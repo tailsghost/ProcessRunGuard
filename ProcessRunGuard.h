@@ -14,6 +14,7 @@ struct ProcessRunGuardResult {
 };
 
 
+
 class ProcessRunGuard {
 public:
 	ProcessRunGuard() = default;
@@ -70,17 +71,14 @@ public:
 			Fail(outResult, L"CreateProcessW failed");
 
 		std::string outA, errA;
-
-		std::thread t1([&] { outA = ReadPipe(outRead); });
-		std::thread t2([&] { errA = ReadPipe(errRead); });
+		outA = ReadPipe(outRead);
+		errA = ReadPipe(errRead);
 
 		WaitForSingleObject(pi.hProcess, INFINITE);
 		GetExitCodeProcess(pi.hProcess, (DWORD*)&outResult.code);
 
 		CloseHandle(outRead);
 		CloseHandle(errRead);
-		t1.join();
-		t2.join();
 		CloseHandle(pi.hProcess);
 		CloseHandle(pi.hThread);
 
