@@ -10,7 +10,7 @@ struct ProcessRunGuardResult {
 	std::wstring stderrText;
 	std::wstring command;
 	int code = -1;
-	bool seccess = false;
+	bool success = false;
 };
 
 
@@ -84,13 +84,13 @@ public:
 
 		outResult.stdoutText = Utf8ToWide(outA);
 		outResult.stderrText = Utf8ToWide(errA);
-		outResult.seccess = (outResult.code == 0);
+		outResult.success = (outResult.code == 0);
 	}
 
 private:
 	static void Fail(ProcessRunGuardResult& r, const std::wstring& msg) {
 		r.stderrText = msg;
-		r.seccess = false;
+		r.success = false;
 	}
 
 	static std::string ReadPipe(HANDLE h) {
