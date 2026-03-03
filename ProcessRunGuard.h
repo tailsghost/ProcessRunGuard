@@ -47,7 +47,7 @@ public:
 
 		PROCESS_INFORMATION pi{};
 
-		std::wstring fullCmd = L"cmd.exe /C " + command;
+		std::wstring fullCmd = L"cmd.exe /C \"" + command + L"\"";
 		std::vector<wchar_t> buf(fullCmd.begin(), fullCmd.end());
 		buf.push_back(0);
 
