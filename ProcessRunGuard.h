@@ -74,7 +74,23 @@ public:
 		outA = ReadPipe(outRead);
 		errA = ReadPipe(errRead);
 
-		WaitForSingleObject(pi.hProcess, INFINITE);
+		auto wait = WaitForSingleObject(pi.hProcess, 3000);
+
+		if (wait == WAIT_TIMEOUT) {
+			TerminateProcess(pi.hProcess, 1);
+
+			outResult.code = -1;
+			outResult.success = false;
+			outResult.stderrText = L"Timeout";
+
+			CloseHandle(outRead);
+			CloseHandle(errRead);
+			CloseHandle(pi.hProcess);
+			CloseHandle(pi.hThread);
+
+			return;
+		}
+
 		GetExitCodeProcess(pi.hProcess, (DWORD*)&outResult.code);
 
 		CloseHandle(outRead);
@@ -95,7 +111,7 @@ private:
 
 	static std::string ReadPipe(HANDLE h) {
 		std::string s;
-		char buf[4096];
+		char buf[8192];
 		DWORD read = 0;
 		while(ReadFile(h, buf, sizeof(buf), &read, nullptr) && read > 0)
 			s.append(buf, read);
